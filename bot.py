@@ -833,6 +833,164 @@ async def verify_button(interaction: discord.Interaction, роль: discord.Role
 
 
 # ═══════════════════════════════════════════════════════════════
+# РОЗЫГРЫШИ
+# ═══════════════════════════════════════════════════════════════
+import random
+import re
+
+active_giveaways: dict[int, asyncio.Task] = {}  # message_id → Task
+
+def parse_duration(text: str) -> int | None:
+    """Парсит строку типа '1д', '2ч', '30м', '10с' в секунды."""
+    units = {"с": 1, "м": 60, "ч": 3600, "д": 86400}
+    match = re.fullmatch(r"(\d+)([сСмМчЧдД])", text.strip())
+    if not match:
+        return None
+    val, unit = int(match.group(1)), match.group(2).lower()
+    return val * units[unit]
+
+def duration_str(seconds: int) -> str:
+    if seconds >= 86400:
+        return f"{seconds // 86400} д."
+    if seconds >= 3600:
+        return f"{seconds // 3600} ч."
+    if seconds >= 60:
+        return f"{seconds // 60} мин."
+    return f"{seconds} сек."
+
+async def finish_giveaway(message: discord.Message, prize: str, winners_count: int):
+    await asyncio.sleep(0)  # yield
+    try:
+        message = await message.channel.fetch_message(message.id)
+    except discord.NotFound:
+        return
+
+    reaction = discord.utils.get(message.reactions, emoji="🎉")
+    users = []
+    if reaction:
+        async for u in reaction.users():
+            if not u.bot:
+                users.append(u)
+
+    embed = message.embeds[0].copy() if message.embeds else discord.Embed()
+    embed.color = discord.Color.dark_grey()
+    embed.set_footer(text="Розыгрыш завершён")
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    if len(users) < 1:
+        embed.description = "❌ Никто не участвовал."
+        await message.edit(embed=embed)
+        await message.channel.send("😔 В розыгрыше никто не участвовал.")
+        return
+
+    chosen = random.sample(users, min(winners_count, len(users)))
+    mentions = ", ".join(w.mention for w in chosen)
+    embed.description = f"🏆 **Победитель(и):** {mentions}\n🎁 **Приз:** {prize}"
+    await message.edit(embed=embed)
+    await message.channel.send(f"🎉 Поздравляем {mentions}! Вы выиграли **{prize}**!")
+    active_giveaways.pop(message.id, None)
+
+async def run_giveaway(message: discord.Message, prize: str, seconds: int, winners_count: int):
+    await asyncio.sleep(seconds)
+    await finish_giveaway(message, prize, winners_count)
+
+@bot.tree.command(name="розыгрыш-старт", description="Запустить розыгрыш")
+@app_commands.describe(
+    приз="Что разыгрывается",
+    длительность="Продолжительность: 10м, 1ч, 2д и т.д.",
+    победителей="Количество победителей (по умолчанию 1)",
+    канал="Канал для розыгрыша (по умолчанию текущий)"
+)
+@app_commands.checks.has_permissions(manage_guild=True)
+async def giveaway_start(interaction: discord.Interaction, приз: str, длительность: str,
+                          победителей: int = 1, канал: discord.TextChannel = None):
+    seconds = parse_duration(длительность)
+    if not seconds:
+        await interaction.response.send_message(
+            embed=make_embed(discord.Color.red(), "❌ Неверный формат",
+                             "Укажите длительность: `10м`, `1ч`, `2д`, `30с`"),
+            ephemeral=True
+        )
+        return
+
+    target = канал or interaction.channel
+    ends_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=seconds)
+
+    embed = discord.Embed(
+        title="🎉 РОЗЫГРЫШ 🎉",
+        description=f"🎁 **Приз:** {приз}\n⏰ **Конец:** <t:{int(ends_at.timestamp())}:R>\n👥 **Победителей:** {победителей}\n\n**Нажмите 🎉 чтобы участвовать!**",
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text=f"Организатор: {interaction.user.display_name} • Длительность: {duration_str(seconds)}")
+    embed.timestamp = ends_at
+
+    msg = await target.send(embed=embed)
+    await msg.add_reaction("🎉")
+
+    task = asyncio.create_task(run_giveaway(msg, приз, seconds, победителей))
+    active_giveaways[msg.id] = task
+
+    await interaction.response.send_message(
+        embed=make_embed(discord.Color.green(), "✅ Розыгрыш запущен", f"Розыгрыш в {target.mention} на {duration_str(seconds)}!"),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(name="розыгрыш-завершить", description="Досрочно завершить розыгрыш")
+@app_commands.describe(message_id="ID сообщения с розыгрышем")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def giveaway_end(interaction: discord.Interaction, message_id: str):
+    try:
+        msg_id = int(message_id)
+    except ValueError:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "Неверный ID сообщения."), ephemeral=True)
+        return
+
+    task = active_giveaways.get(msg_id)
+    if task:
+        task.cancel()
+        active_giveaways.pop(msg_id, None)
+
+    try:
+        msg = await interaction.channel.fetch_message(msg_id)
+        prize = "—"
+        if msg.embeds and msg.embeds[0].description:
+            m = re.search(r"Приз:\*\* (.+)", msg.embeds[0].description)
+            if m:
+                prize = m.group(1).strip()
+        await finish_giveaway(msg, prize, 1)
+        await interaction.response.send_message(embed=make_embed(discord.Color.green(), "✅ Завершено", "Розыгрыш досрочно завершён."), ephemeral=True)
+    except discord.NotFound:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Не найдено", "Сообщение не найдено в этом канале."), ephemeral=True)
+
+
+@bot.tree.command(name="розыгрыш-перезапустить", description="Выбрать нового победителя")
+@app_commands.describe(message_id="ID сообщения с завершённым розыгрышем")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def giveaway_reroll(interaction: discord.Interaction, message_id: str):
+    try:
+        msg_id = int(message_id)
+        msg = await interaction.channel.fetch_message(msg_id)
+    except (ValueError, discord.NotFound):
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Не найдено", "Сообщение не найдено."), ephemeral=True)
+        return
+
+    reaction = discord.utils.get(msg.reactions, emoji="🎉")
+    users = []
+    if reaction:
+        async for u in reaction.users():
+            if not u.bot:
+                users.append(u)
+
+    if not users:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Нет участников", "Никто не участвовал."), ephemeral=True)
+        return
+
+    winner = random.choice(users)
+    await interaction.response.send_message(f"🔄 Новый победитель: {winner.mention}! Поздравляем!")
+
+
+# ═══════════════════════════════════════════════════════════════
 # ОБРАБОТЧИК ОШИБОК
 # ═══════════════════════════════════════════════════════════════
 @bot.tree.error
