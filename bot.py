@@ -125,6 +125,7 @@ async def on_ready():
     # Регистрируем DynamicItem для кнопок верификации (работает после перезапуска)
     bot.add_dynamic_items(VerifyDynamicButton)
 
+    await bot.change_presence(activity=discord.Game(name="Neon Mobile"))
     await bot.tree.sync()
     print(f"✅ Бот {bot.user} запущен!")
 
