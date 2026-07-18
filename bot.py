@@ -6,6 +6,9 @@ import os
 import json
 import threading
 import socket
+import asyncio
+import random
+import re
 
 # ═══════════════════════════════════════════════════════════════
 # КОНСТАНТЫ
@@ -835,9 +838,6 @@ async def verify_button(interaction: discord.Interaction, роль: discord.Role
 # ═══════════════════════════════════════════════════════════════
 # РОЗЫГРЫШИ
 # ═══════════════════════════════════════════════════════════════
-import random
-import re
-
 active_giveaways: dict[int, asyncio.Task] = {}  # message_id → Task
 
 def parse_duration(text: str) -> int | None:
@@ -991,6 +991,115 @@ async def giveaway_reroll(interaction: discord.Interaction, message_id: str):
 
 
 # ═══════════════════════════════════════════════════════════════
+# ИНФО ПОЛЬЗОВАТЕЛЯ
+# ═══════════════════════════════════════════════════════════════
+@bot.tree.command(name="инфо-пользователя", description="Показать информацию о пользователе")
+@app_commands.describe(участник="Пользователь (по умолчанию — вы)")
+async def user_info(interaction: discord.Interaction, участник: discord.Member = None):
+    member = участник or interaction.user
+    roles = [r.mention for r in reversed(member.roles) if r.name != "@everyone"]
+    joined_server = f"<t:{int(member.joined_at.timestamp())}:D>" if member.joined_at else "—"
+    joined_discord = f"<t:{int(member.created_at.timestamp())}:D>"
+
+    embed = discord.Embed(
+        title=f"👤 {member.display_name}",
+        color=member.color if member.color.value else discord.Color.blurple()
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="🏷️ Тег", value=str(member), inline=True)
+    embed.add_field(name="🆔 ID", value=str(member.id), inline=True)
+    embed.add_field(name="🤖 Бот", value="Да" if member.bot else "Нет", inline=True)
+    embed.add_field(name="📅 Зашёл на сервер", value=joined_server, inline=True)
+    embed.add_field(name="📅 Создан аккаунт", value=joined_discord, inline=True)
+    embed.add_field(name="🎮 Статус", value=str(member.status).capitalize(), inline=True)
+    embed.add_field(name=f"🎭 Роли ({len(roles)})", value=" ".join(roles[:20]) if roles else "Нет", inline=False)
+    embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    await interaction.response.send_message(embed=embed)
+
+
+# ═══════════════════════════════════════════════════════════════
+# ИНФО СЕРВЕРА
+# ═══════════════════════════════════════════════════════════════
+@bot.tree.command(name="инфо-сервера", description="Показать информацию о сервере")
+async def server_info(interaction: discord.Interaction):
+    guild = interaction.guild
+    bots = sum(1 for m in guild.members if m.bot)
+    humans = guild.member_count - bots
+    text_ch = len(guild.text_channels)
+    voice_ch = len(guild.voice_channels)
+    created = f"<t:{int(guild.created_at.timestamp())}:D>"
+
+    embed = discord.Embed(title=f"🏰 {guild.name}", color=discord.Color.blurple())
+    if guild.icon:
+        embed.set_thumbnail(url=guild.icon.url)
+    embed.add_field(name="🆔 ID", value=str(guild.id), inline=True)
+    embed.add_field(name="👑 Владелец", value=guild.owner.mention if guild.owner else "—", inline=True)
+    embed.add_field(name="📅 Создан", value=created, inline=True)
+    embed.add_field(name="👥 Участники", value=f"Всего: **{guild.member_count}**\nЛюди: **{humans}** | Боты: **{bots}**", inline=True)
+    embed.add_field(name="💬 Каналы", value=f"Текстовых: **{text_ch}**\nГолосовых: **{voice_ch}**", inline=True)
+    embed.add_field(name="🎭 Ролей", value=str(len(guild.roles)), inline=True)
+    embed.add_field(name="😀 Эмодзи", value=str(len(guild.emojis)), inline=True)
+    embed.add_field(name="💎 Буст", value=f"Уровень **{guild.premium_tier}** | {guild.premium_subscription_count} бустов", inline=True)
+    embed.add_field(name="🔒 Верификация", value=str(guild.verification_level).capitalize(), inline=True)
+    embed.set_footer(text=f"Запросил: {interaction.user.display_name}")
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    await interaction.response.send_message(embed=embed)
+
+
+# ═══════════════════════════════════════════════════════════════
+# РАССЫЛКА (только для пользователя 1487431631253016656)
+# ═══════════════════════════════════════════════════════════════
+BROADCAST_OWNER_ID = 1487431631253016656
+
+@bot.tree.command(name="рассылка", description="Отправить сообщение всем участникам сервера в ЛС")
+@app_commands.describe(текст="Текст рассылки")
+async def broadcast(interaction: discord.Interaction, текст: str):
+    if interaction.user.id != BROADCAST_OWNER_ID:
+        await interaction.response.send_message(
+            embed=make_embed(discord.Color.red(), "❌ Нет доступа", "У вас нет прав для этой команды."),
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    guild = interaction.guild
+    sent = 0
+    failed = 0
+
+    embed = discord.Embed(
+        title="📢 Сообщение от администрации",
+        description=текст,
+        color=discord.Color.gold()
+    )
+    embed.set_footer(text=guild.name)
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else discord.Embed.Empty)
+    embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
+
+    for member in guild.members:
+        if member.bot:
+            continue
+        try:
+            await member.send(embed=embed)
+            sent += 1
+            await asyncio.sleep(0.5)  # защита от rate-limit
+        except (discord.Forbidden, discord.HTTPException):
+            failed += 1
+
+    await interaction.followup.send(
+        embed=make_embed(
+            discord.Color.green(),
+            "✅ Рассылка завершена",
+            f"Отправлено: **{sent}** | Не доставлено: **{failed}** (закрытые ЛС)"
+        ),
+        ephemeral=True
+    )
+
+
+# ═══════════════════════════════════════════════════════════════
 # ОБРАБОТЧИК ОШИБОК
 # ═══════════════════════════════════════════════════════════════
 @bot.tree.error
@@ -1030,8 +1139,6 @@ def run_webserver():
 # ═══════════════════════════════════════════════════════════════
 # ЗАПУСК
 # ═══════════════════════════════════════════════════════════════
-import asyncio
-
 token = os.environ.get("DISCORD_TOKEN")
 if not token:
     raise RuntimeError("DISCORD_TOKEN не задан!")
