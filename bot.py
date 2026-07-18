@@ -5,7 +5,7 @@ import datetime
 import os
 import json
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import socket
 
 # ═══════════════════════════════════════════════════════════════
 # КОНСТАНТЫ
@@ -833,20 +833,21 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 # ═══════════════════════════════════════════════════════════════
 # ВЕБ-СЕРВЕР (для UptimeRobot — чтобы бот не засыпал)
 # ═══════════════════════════════════════════════════════════════
-class PingHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-
-    def log_message(self, format, *args):
-        pass  # отключаем лишние логи
+def run_webserver():
+    port = int(os.environ.get("PORT", 8080))
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("0.0.0.0", port))
+    sock.listen(5)
+    print(f"HTTP сервер запущен на порту {port}")
+    while True:
+        try:
+            conn, _ = sock.accept()
+            conn.recv(4096)
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: text/plain\r\n\r\nOK")
+            conn.close()
+        except Exception:
+            pass
 
 # ═══════════════════════════════════════════════════════════════
 # ЗАПУСК
@@ -867,8 +868,5 @@ def run_bot():
 
 threading.Thread(target=run_bot, daemon=True).start()
 
-# HTTP-сервер на главном потоке — всегда живёт, даже если бот упал
-port = int(os.environ.get("PORT", 8080))
-server = HTTPServer(("0.0.0.0", port), PingHandler)
-print(f"HTTP сервер запущен на порту {port}")
-server.serve_forever()
+# HTTP-сервер на главном потоке — отвечает 200 на любой запрос (GET/HEAD/etc)
+run_webserver()
