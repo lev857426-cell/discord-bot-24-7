@@ -1147,11 +1147,12 @@ if not token:
 bot.add_view(OPGMessageView())
 bot.add_view(GOVMessageView())
 
-# Бот запускается в фоновом потоке
-def run_bot():
-    asyncio.run(bot.start(token))
-
-threading.Thread(target=run_bot, daemon=True).start()
-
-# HTTP-сервер на главном потоке — отвечает 200 на любой запрос (GET/HEAD/etc)
-run_webserver()
+# Если запущено на Render — HTTP-сервер на главном потоке, бот в фоне
+# Если запущено локально — только бот
+if os.environ.get("RENDER"):
+    def run_bot():
+        asyncio.run(bot.start(token))
+    threading.Thread(target=run_bot, daemon=True).start()
+    run_webserver()
+else:
+    bot.run(token)
