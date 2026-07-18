@@ -40,7 +40,7 @@ def load_data() -> dict:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"cooldowns": {}, "config": {}}
+        return {"cooldowns": {}, "config": {}, "reaction_verifications": {}}
 
 def save_data(data: dict):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -68,6 +68,7 @@ def set_config(guild_id: int, key: str, value):
 warnings: dict[int, dict[int, list[str]]] = {}
 
 # Верификация по реакции: { message_id: {"role_id", "emoji", "guild_id"} }
+# Загружается из data.json при старте (см. on_ready)
 reaction_verifications: dict[int, dict] = {}
 
 # Ожидание скриншота: { user_id: {category, nickname, rank, faction, guild_id, review_channel_id, user_mention, user_tag} }
@@ -116,6 +117,14 @@ def reset_cooldown(guild_id: int, user_id: int):
 # ═══════════════════════════════════════════════════════════════
 @bot.event
 async def on_ready():
+    # Загружаем верификации по реакции из файла
+    data = load_data()
+    for msg_id_str, v in data.get("reaction_verifications", {}).items():
+        reaction_verifications[int(msg_id_str)] = v
+
+    # Регистрируем DynamicItem для кнопок верификации (работает после перезапуска)
+    bot.add_dynamic_items(VerifyDynamicButton)
+
     await bot.tree.sync()
     print(f"✅ Бот {bot.user} запущен!")
 
@@ -799,18 +808,34 @@ async def verify_reaction(interaction: discord.Interaction, роль: discord.Ro
     await interaction.response.send_message("📨 Отправлено!", ephemeral=True)
     msg = await interaction.channel.send(embed=embed)
     await msg.add_reaction(эмодзи)
-    reaction_verifications[msg.id] = {"role_id": роль.id, "emoji": эмодзи, "guild_id": interaction.guild.id}
+    entry = {"role_id": роль.id, "emoji": эмодзи, "guild_id": interaction.guild.id}
+    reaction_verifications[msg.id] = entry
+    # Сохраняем в файл — не теряется при перезапуске
+    data = load_data()
+    data.setdefault("reaction_verifications", {})[str(msg.id)] = entry
+    save_data(data)
 
 
-class VerifyButton(discord.ui.View):
+class VerifyDynamicButton(discord.ui.DynamicItem[discord.ui.Button], template=r"verify_(?P<role_id>\d+)"):
+    """Persistent кнопка верификации — работает после перезапуска бота."""
+
     def __init__(self, role_id: int, label: str = "Пройти верификацию"):
-        super().__init__(timeout=None)
+        super().__init__(
+            discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.success,
+                emoji="✅",
+                custom_id=f"verify_{role_id}",
+            )
+        )
         self.role_id = role_id
-        btn = discord.ui.Button(label=label, style=discord.ButtonStyle.success, emoji="✅", custom_id=f"verify_{role_id}")
-        btn.callback = self.button_callback
-        self.add_item(btn)
 
-    async def button_callback(self, interaction: discord.Interaction):
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match):
+        role_id = int(match.group("role_id"))
+        return cls(role_id)
+
+    async def callback(self, interaction: discord.Interaction):
         role = interaction.guild.get_role(self.role_id)
         if not role:
             await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "Роль не найдена."), ephemeral=True)
@@ -820,6 +845,13 @@ class VerifyButton(discord.ui.View):
             return
         await interaction.user.add_roles(role, reason="Верификация по кнопке")
         await interaction.response.send_message(embed=make_embed(discord.Color.green(), "✅ Верификация пройдена!", f"Вы получили роль **{role.name}**!"), ephemeral=True)
+
+
+class VerifyButtonView(discord.ui.View):
+    """View-обёртка для отправки кнопки верификации."""
+    def __init__(self, role_id: int, label: str = "Пройти верификацию"):
+        super().__init__(timeout=None)
+        self.add_item(VerifyDynamicButton(role_id, label))
 
 
 @bot.tree.command(name="верификация-кнопка", description="Создать сообщение верификации через кнопку")
@@ -832,7 +864,7 @@ async def verify_button(interaction: discord.Interaction, роль: discord.Role
     embed.set_footer(text=f"Роль: {роль.name}")
     embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
     await interaction.response.send_message("📨 Отправлено!", ephemeral=True)
-    await interaction.channel.send(embed=embed, view=VerifyButton(role_id=роль.id, label=текст_кнопки))
+    await interaction.channel.send(embed=embed, view=VerifyButtonView(role_id=роль.id, label=текст_кнопки))
 
 
 # ═══════════════════════════════════════════════════════════════
