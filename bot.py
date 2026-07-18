@@ -848,17 +848,11 @@ class PingHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass  # отключаем лишние логи
 
-def run_webserver():
-    port = int(os.environ.get("PORT", 8080))
-    server = HTTPServer(("0.0.0.0", port), PingHandler)
-    server.serve_forever()
-
-threading.Thread(target=run_webserver, daemon=True).start()
-
-
 # ═══════════════════════════════════════════════════════════════
 # ЗАПУСК
 # ═══════════════════════════════════════════════════════════════
+import asyncio
+
 token = os.environ.get("DISCORD_TOKEN")
 if not token:
     raise RuntimeError("DISCORD_TOKEN не задан!")
@@ -867,4 +861,14 @@ if not token:
 bot.add_view(OPGMessageView())
 bot.add_view(GOVMessageView())
 
-bot.run(token)
+# Бот запускается в фоновом потоке
+def run_bot():
+    asyncio.run(bot.start(token))
+
+threading.Thread(target=run_bot, daemon=True).start()
+
+# HTTP-сервер на главном потоке — всегда живёт, даже если бот упал
+port = int(os.environ.get("PORT", 8080))
+server = HTTPServer(("0.0.0.0", port), PingHandler)
+print(f"HTTP сервер запущен на порту {port}")
+server.serve_forever()
