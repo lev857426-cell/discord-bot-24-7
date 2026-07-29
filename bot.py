@@ -675,11 +675,16 @@ async def ban_cmd(interaction: discord.Interaction, участник: discord.Me
             ephemeral=True
         )
         return
-    await участник.ban(reason=f"{причина} | Модератор: {interaction.user}")
-    await interaction.response.send_message(embed=make_embed(
-        discord.Color.red(), "🔨 Пользователь заблокирован",
-        f"**Пользователь:** {участник.mention}\n**Причина:** {причина}\n**Модератор:** {interaction.user.mention}"
-    ))
+    try:
+        await участник.ban(reason=f"{причина} | Модератор: {interaction.user}")
+        await interaction.response.send_message(embed=make_embed(
+            discord.Color.red(), "🔨 Пользователь заблокирован",
+            f"**Пользователь:** {участник.mention}\n**Причина:** {причина}\n**Модератор:** {interaction.user.mention}"
+        ))
+    except discord.Forbidden:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "Недостаточно прав для блокировки. Проверьте иерархию ролей бота."), ephemeral=True)
+    except discord.HTTPException as e:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", f"Не удалось заблокировать: {e}"), ephemeral=True)
 
 
 @bot.tree.command(name="кик", description="Выгнать пользователя с сервера")
@@ -692,11 +697,16 @@ async def kick_cmd(interaction: discord.Interaction, участник: discord.M
             ephemeral=True
         )
         return
-    await участник.kick(reason=f"{причина} | Модератор: {interaction.user}")
-    await interaction.response.send_message(embed=make_embed(
-        discord.Color.orange(), "👢 Пользователь выгнан",
-        f"**Пользователь:** {участник.mention}\n**Причина:** {причина}\n**Модератор:** {interaction.user.mention}"
-    ))
+    try:
+        await участник.kick(reason=f"{причина} | Модератор: {interaction.user}")
+        await interaction.response.send_message(embed=make_embed(
+            discord.Color.orange(), "👢 Пользователь выгнан",
+            f"**Пользователь:** {участник.mention}\n**Причина:** {причина}\n**Модератор:** {interaction.user.mention}"
+        ))
+    except discord.Forbidden:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "Недостаточно прав для кика. Проверьте иерархию ролей бота."), ephemeral=True)
+    except discord.HTTPException as e:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", f"Не удалось выгнать: {e}"), ephemeral=True)
 
 
 @bot.tree.command(name="мут", description="Заглушить пользователя")
@@ -710,11 +720,16 @@ async def mute_cmd(interaction: discord.Interaction, участник: discord.M
         await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "Нельзя заглушить пользователя с равной или более высокой ролью."), ephemeral=True)
         return
     until = discord.utils.utcnow() + datetime.timedelta(minutes=минуты)
-    await участник.timeout(until, reason=f"{причина} | Модератор: {interaction.user}")
-    await interaction.response.send_message(embed=make_embed(
-        discord.Color.dark_grey(), "🔇 Пользователь заглушён",
-        f"**Пользователь:** {участник.mention}\n**Длительность:** {минуты} мин.\n**Причина:** {причина}\n**Модератор:** {interaction.user.mention}"
-    ))
+    try:
+        await участник.timeout(until, reason=f"{причина} | Модератор: {interaction.user}")
+        await interaction.response.send_message(embed=make_embed(
+            discord.Color.dark_grey(), "🔇 Пользователь заглушён",
+            f"**Пользователь:** {участник.mention}\n**Длительность:** {минуты} мин.\n**Причина:** {причина}\n**Модератор:** {interaction.user.mention}"
+        ))
+    except discord.Forbidden:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "Недостаточно прав для мута. Проверьте иерархию ролей бота."), ephemeral=True)
+    except discord.HTTPException as e:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", f"Не удалось замутить: {e}"), ephemeral=True)
 
 
 @bot.tree.command(name="размут", description="Снять мут с пользователя")
@@ -724,11 +739,16 @@ async def unmute_cmd(interaction: discord.Interaction, участник: discord
     if not участник.is_timed_out():
         await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "У пользователя нет активного мута."), ephemeral=True)
         return
-    await участник.timeout(None)
-    await interaction.response.send_message(embed=make_embed(
-        discord.Color.green(), "🔊 Мут снят",
-        f"**Пользователь:** {участник.mention}\n**Модератор:** {interaction.user.mention}"
-    ))
+    try:
+        await участник.timeout(None)
+        await interaction.response.send_message(embed=make_embed(
+            discord.Color.green(), "🔊 Мут снят",
+            f"**Пользователь:** {участник.mention}\n**Модератор:** {interaction.user.mention}"
+        ))
+    except discord.Forbidden:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", "Недостаточно прав для снятия мута."), ephemeral=True)
+    except discord.HTTPException as e:
+        await interaction.response.send_message(embed=make_embed(discord.Color.red(), "❌ Ошибка", f"Не удалось снять мут: {e}"), ephemeral=True)
 
 
 @bot.tree.command(name="предупреждение", description="Выдать предупреждение")
