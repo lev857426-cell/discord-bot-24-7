@@ -15,6 +15,7 @@ import re
 # ═══════════════════════════════════════════════════════════════
 OPG_FACTIONS = ["Арзамасская ОПГ", "Батыревская", "Лыткаринская"]
 GOV_FACTIONS = ["Правительство", "ФСБ", "Министерство внутренних дел", "ГИБДД", "Городская больница", "СМИ"]
+SS_FACTIONS  = ["Совет Сервера"]
 COOLDOWN_HOURS = 24
 DATA_FILE = os.path.join(os.path.dirname(__file__), "data.json")
 
@@ -124,6 +125,9 @@ async def on_ready():
 
     # Регистрируем DynamicItem для кнопок верификации (работает после перезапуска)
     bot.add_dynamic_items(VerifyDynamicButton)
+    bot.add_view(OPGMessageView())
+    bot.add_view(GOVMessageView())
+    bot.add_view(SSMessageView())
 
     await bot.change_presence(activity=discord.Game(name="Azur Mobile"))
     await bot.tree.sync()
@@ -333,7 +337,12 @@ class ApplicationModal(discord.ui.Modal, title="Подача заявки"):
 class FactionSelectView(discord.ui.View):
     def __init__(self, category: str, review_channel_id: int, guild_id: int):
         super().__init__(timeout=60)
-        factions = OPG_FACTIONS if category == "opg" else GOV_FACTIONS
+        if category == "opg":
+            factions = OPG_FACTIONS
+        elif category == "gov":
+            factions = GOV_FACTIONS
+        else:
+            factions = SS_FACTIONS
 
         select = discord.ui.Select(
             placeholder="Выберите фракцию...",
@@ -495,9 +504,28 @@ class OPGMessageView(discord.ui.View):
 
     @discord.ui.button(label="Роль СС", style=discord.ButtonStyle.secondary, emoji="👑", custom_id="opg_role_ss")
     async def role_ss(self, interaction: discord.Interaction, button: discord.ui.Button):
+        remaining = check_cooldown(interaction.guild.id, interaction.user.id)
+        if remaining:
+            h, m = int(remaining // 3600), int((remaining % 3600) // 60)
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.red(), "⏳ Кулдаун",
+                    f"Вы уже подавали заявку. Следующая возможна через **{h}ч {m}мин**."),
+                ephemeral=True
+            )
+            return
+        cfg = get_config(interaction.guild.id)
+        review_channel_id = cfg.get("ss_review_channel")
+        if not review_channel_id:
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.red(), "❌ Ошибка", "Канал рассмотрения СС не настроен. Используйте `/запрос-сс`."),
+                ephemeral=True
+            )
+            return
+        view = FactionSelectView("ss", review_channel_id, interaction.guild.id)
         await interaction.response.send_message(
-            embed=make_embed(discord.Color.gold(), "👑 Роль СС",
-                "Для получения роли Совета Сервера обратитесь к администратору."),
+            embed=make_embed(discord.Color.gold(), "👑 Заявка на Совет Сервера",
+                "\n".join(f"• {f}" for f in SS_FACTIONS)),
+            view=view,
             ephemeral=True
         )
 
@@ -560,9 +588,28 @@ class GOVMessageView(discord.ui.View):
 
     @discord.ui.button(label="Роль СС", style=discord.ButtonStyle.secondary, emoji="👑", custom_id="gov_role_ss")
     async def role_ss(self, interaction: discord.Interaction, button: discord.ui.Button):
+        remaining = check_cooldown(interaction.guild.id, interaction.user.id)
+        if remaining:
+            h, m = int(remaining // 3600), int((remaining % 3600) // 60)
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.red(), "⏳ Кулдаун",
+                    f"Вы уже подавали заявку. Следующая возможна через **{h}ч {m}мин**."),
+                ephemeral=True
+            )
+            return
+        cfg = get_config(interaction.guild.id)
+        review_channel_id = cfg.get("ss_review_channel")
+        if not review_channel_id:
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.red(), "❌ Ошибка", "Канал рассмотрения СС не настроен. Используйте `/запрос-сс`."),
+                ephemeral=True
+            )
+            return
+        view = FactionSelectView("ss", review_channel_id, interaction.guild.id)
         await interaction.response.send_message(
-            embed=make_embed(discord.Color.gold(), "👑 Роль СС",
-                "Для получения роли Совета Сервера обратитесь к администратору."),
+            embed=make_embed(discord.Color.gold(), "👑 Заявка на Совет Сервера",
+                "\n".join(f"• {f}" for f in SS_FACTIONS)),
+            view=view,
             ephemeral=True
         )
 
@@ -583,6 +630,63 @@ class GOVMessageView(discord.ui.View):
         else:
             await interaction.response.send_message(
                 embed=make_embed(discord.Color.light_grey(), "ℹ️ Нет ролей", "У вас нет активных ролей гос. организаций."),
+                ephemeral=True
+            )
+
+
+# ═══════════════════════════════════════════════════════════════
+# VIEW: ОСНОВНОЕ СООБЩЕНИЕ СС
+# ═══════════════════════════════════════════════════════════════
+class SSMessageView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Подать заявку", style=discord.ButtonStyle.success, emoji="👑", custom_id="ss_get_role")
+    async def get_role(self, interaction: discord.Interaction, button: discord.ui.Button):
+        remaining = check_cooldown(interaction.guild.id, interaction.user.id)
+        if remaining:
+            h, m = int(remaining // 3600), int((remaining % 3600) // 60)
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.red(), "⏳ Кулдаун",
+                    f"Вы уже подавали заявку. Следующая возможна через **{h}ч {m}мин**."),
+                ephemeral=True
+            )
+            return
+
+        cfg = get_config(interaction.guild.id)
+        review_channel_id = cfg.get("ss_review_channel")
+        if not review_channel_id:
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.red(), "❌ Ошибка", "Канал рассмотрения не настроен. Обратитесь к администратору."),
+                ephemeral=True
+            )
+            return
+
+        view = FactionSelectView("ss", review_channel_id, interaction.guild.id)
+        await interaction.response.send_message(
+            embed=make_embed(discord.Color.gold(), "👑 Совет Сервера",
+                "\n".join(f"• {f}" for f in SS_FACTIONS)),
+            view=view,
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="Снять роли", style=discord.ButtonStyle.danger, emoji="🚫", custom_id="ss_remove_roles")
+    async def remove_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
+        removed = []
+        for faction in SS_FACTIONS:
+            role = discord.utils.get(interaction.guild.roles, name=faction)
+            if role and role in interaction.user.roles:
+                await interaction.user.remove_roles(role, reason="Снятие роли СС по запросу")
+                removed.append(role.name)
+
+        if removed:
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.orange(), "🚫 Роли сняты", f"Удалены роли: **{', '.join(removed)}**"),
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(
+                embed=make_embed(discord.Color.light_grey(), "ℹ️ Нет ролей", "У вас нет активных ролей СС."),
                 ephemeral=True
             )
 
@@ -639,6 +743,31 @@ async def setup_gov(interaction: discord.Interaction, канал_рассмот�
     bot.add_view(GOVMessageView())
     await interaction.response.send_message("✅ Сообщение гос. организаций создано!", ephemeral=True)
     await interaction.channel.send(embed=embed, view=GOVMessageView())
+
+
+@bot.tree.command(name="запрос-сс", description="Создать сообщение для подачи заявок на Совет Сервера")
+@app_commands.describe(канал_рассмотрения="Канал, куда будут поступать заявки для проверки")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def setup_ss(interaction: discord.Interaction, канал_рассмотрения: discord.TextChannel):
+    set_config(interaction.guild.id, "ss_review_channel", канал_рассмотрения.id)
+
+    embed = discord.Embed(
+        title="Совет Сервера! 👑",
+        description=(
+            "Уважаемые игроки! Здесь вы можете подать заявку на вступление в Совет Сервера. "
+            "Следуйте инструкциям после нажатия на кнопку **«Подать заявку»**!\n\n"
+            "**Порядок подачи:**\n"
+            "1. Нажмите на кнопку ниже.\n"
+            "2. Заполните форму.\n"
+            "3. Отправьте скрин статистики в личные сообщения бота."
+        ),
+        color=discord.Color.from_rgb(212, 175, 55)
+    )
+    embed.set_footer(text=f"КД: {COOLDOWN_HOURS} часов")
+
+    bot.add_view(SSMessageView())
+    await interaction.response.send_message("✅ Сообщение Совета Сервера создано!", ephemeral=True)
+    await interaction.channel.send(embed=embed, view=SSMessageView())
 
 
 # ═══════════════════════════════════════════════════════════════
