@@ -514,10 +514,10 @@ class OPGMessageView(discord.ui.View):
             )
             return
         cfg = get_config(interaction.guild.id)
-        review_channel_id = cfg.get("ss_review_channel")
+        review_channel_id = cfg.get("ss_review_channel") or cfg.get("opg_review_channel")
         if not review_channel_id:
             await interaction.response.send_message(
-                embed=make_embed(discord.Color.red(), "❌ Ошибка", "Канал рассмотрения СС не настроен. Используйте `/запрос-сс`."),
+                embed=make_embed(discord.Color.red(), "❌ Ошибка", "Канал рассмотрения не настроен. Обратитесь к администратору."),
                 ephemeral=True
             )
             return
@@ -598,10 +598,10 @@ class GOVMessageView(discord.ui.View):
             )
             return
         cfg = get_config(interaction.guild.id)
-        review_channel_id = cfg.get("ss_review_channel")
+        review_channel_id = cfg.get("ss_review_channel") or cfg.get("gov_review_channel")
         if not review_channel_id:
             await interaction.response.send_message(
-                embed=make_embed(discord.Color.red(), "❌ Ошибка", "Канал рассмотрения СС не настроен. Используйте `/запрос-сс`."),
+                embed=make_embed(discord.Color.red(), "❌ Ошибка", "Канал рассмотрения не настроен. Обратитесь к администратору."),
                 ephemeral=True
             )
             return
