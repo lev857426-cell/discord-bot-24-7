@@ -630,12 +630,30 @@ async def verify_button_cmd(interaction: discord.Interaction, роль: discord.
 # ═══════════════════════════════════════════════════════════════
 # ТИКЕТЫ
 # ═══════════════════════════════════════════════════════════════
+async def _safe_reply(interaction: discord.Interaction, embed: discord.Embed, ephemeral: bool = True):
+    """Отправляет ответ независимо от того, был ли interaction уже acknowledged."""
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+        else:
+            await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
+    except Exception:
+        pass
+
+
 class OrderModal(discord.ui.Modal, title="Создание заказа"):
     details = discord.ui.TextInput(label="Опишите ваш заказ", style=discord.TextStyle.paragraph,
                                    required=True, max_length=500)
 
     async def on_submit(self, interaction: discord.Interaction):
-        await _create_ticket(interaction, kind="order", details=self.details.value)
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await _create_ticket(interaction, kind="order", details=self.details.value)
+        except Exception as e:
+            await _safe_reply(interaction, make_embed(DANGER, "❌ Ошибка при создании заказа", str(e)))
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception):
+        await _safe_reply(interaction, make_embed(DANGER, "❌ Ошибка", str(error)))
 
 
 class TicketPanelView(discord.ui.View):
@@ -644,20 +662,26 @@ class TicketPanelView(discord.ui.View):
 
     @discord.ui.button(label="🎫 Обычный тикет", style=discord.ButtonStyle.primary, custom_id="ticket_open")
     async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Проверяем существующий тикет по ID пользователя в теме канала
         existing = discord.utils.find(
-            lambda c: c.name == f"тикет-{interaction.user.name.lower().replace(' ', '-')}",
+            lambda c: c.name.startswith("тикет-") and str(interaction.user.id) in (c.topic or ""),
             interaction.guild.text_channels)
         if existing:
             return await interaction.response.send_message(
                 embed=make_embed(WARNING, "⚠️ Тикет уже открыт", f"У вас уже есть тикет: {existing.mention}"),
                 ephemeral=True)
         await interaction.response.defer(ephemeral=True)
-        await _create_ticket(interaction, kind="ticket")
+        try:
+            await _create_ticket(interaction, kind="ticket")
+        except discord.Forbidden:
+            await _safe_reply(interaction, make_embed(DANGER, "❌ Нет прав", "Боту не хватает прав для создания канала. Убедитесь, что у него есть `Управление каналами`."))
+        except Exception as e:
+            await _safe_reply(interaction, make_embed(DANGER, "❌ Ошибка", f"Не удалось создать тикет: {e}"))
 
     @discord.ui.button(label="🛒 Создать заказ", style=discord.ButtonStyle.success, custom_id="ticket_order")
     async def open_order(self, interaction: discord.Interaction, button: discord.ui.Button):
         existing = discord.utils.find(
-            lambda c: c.name == f"заказ-{interaction.user.name.lower().replace(' ', '-')}",
+            lambda c: c.name.startswith("заказ-") and str(interaction.user.id) in (c.topic or ""),
             interaction.guild.text_channels)
         if existing:
             return await interaction.response.send_message(
@@ -672,8 +696,9 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="🔒 Закрыть тикет", style=discord.ButtonStyle.danger, custom_id="ticket_close")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if not interaction.user.guild_permissions.manage_channels and \
-                interaction.user.name.lower().replace(" ", "-") not in interaction.channel.name:
+        # Проверяем права: либо manage_channels, либо создатель тикета (ID в теме)
+        is_owner = str(interaction.user.id) in (interaction.channel.topic or "")
+        if not interaction.user.guild_permissions.manage_channels and not is_owner:
             return await interaction.response.send_message(
                 embed=make_embed(DANGER, "❌ Нет прав", "Вы не можете закрыть этот тикет."), ephemeral=True)
         await interaction.response.send_message(
@@ -689,7 +714,10 @@ async def _create_ticket(interaction: discord.Interaction, kind: str, details: s
     guild = interaction.guild
     user  = interaction.user
     prefix = "тикет" if kind == "ticket" else "заказ"
-    name   = f"{prefix}-{user.name.lower().replace(' ', '-')}"
+    # Используем display_name для читаемости, ID для надёжной идентификации
+    safe_name = re.sub(r"[^a-zA-Zа-яёА-ЯЁ0-9\-]", "", user.display_name.lower().replace(" ", "-"))[:20] or str(user.id)
+    name = f"{prefix}-{safe_name}"
+
     category = discord.utils.find(
         lambda c: any(k in c.name.lower() for k in ("тикет", "ticket", "поддержка", "support")),
         guild.categories)
@@ -701,20 +729,18 @@ async def _create_ticket(interaction: discord.Interaction, kind: str, details: s
     for role in guild.roles:
         if role.permissions.manage_channels:
             overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
-    try:
-        channel = await guild.create_text_channel(name, category=category, overwrites=overwrites)
-    except discord.Forbidden:
-        msg = embed=make_embed(DANGER, "❌ Ошибка", "У бота нет прав для создания каналов.")
-        if not interaction.response.is_done():
-            return await interaction.response.send_message(embed=msg, ephemeral=True)
-        return await interaction.followup.send(embed=msg, ephemeral=True)
+
+    # ID пользователя в теме — для надёжного поиска дублей и проверки прав на закрытие
+    channel = await guild.create_text_channel(
+        name, category=category, overwrites=overwrites,
+        topic=f"Тикет пользователя {user} | ID: {user.id}")
 
     if kind == "ticket":
         embed = discord.Embed(title="🎫 Тикет открыт",
                               description=f"Привет, {user.mention}!\n\nОпишите вашу проблему и ожидайте ответа.", color=ACCENT)
     else:
         embed = discord.Embed(title="🛒 Заказ создан",
-                              description=f"Привет, {user.mention}!\n\n**Детали:**\n{details}\n\nМенеджер свяжется скоро.", color=SUCCESS)
+                              description=f"Привет, {user.mention}!\n\n**Детали заказа:**\n{details}\n\nМенеджер свяжется скоро.", color=SUCCESS)
     embed.set_thumbnail(url=user.display_avatar.url)
     embed.add_field(name="👤 Создал", value=user.mention, inline=True)
     embed.add_field(name="📅 Открыт", value=discord.utils.format_dt(datetime.datetime.now(datetime.timezone.utc), "R"), inline=True)
@@ -722,11 +748,7 @@ async def _create_ticket(interaction: discord.Interaction, kind: str, details: s
     embed.timestamp = datetime.datetime.now(datetime.timezone.utc)
     await channel.send(content=user.mention, embed=embed, view=TicketControlView())
 
-    reply = make_embed(SUCCESS, "✅ Создано!", f"Ваш канал: {channel.mention}")
-    if not interaction.response.is_done():
-        await interaction.response.send_message(embed=reply, ephemeral=True)
-    else:
-        await interaction.followup.send(embed=reply, ephemeral=True)
+    await _safe_reply(interaction, make_embed(SUCCESS, "✅ Создано!", f"Ваш канал: {channel.mention}"))
 
 
 @bot.tree.command(name="тикет-панель", description="Создать панель тикетов")
