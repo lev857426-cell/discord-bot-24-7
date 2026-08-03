@@ -126,7 +126,7 @@ def toggle_log_event(guild_id: int, event: str):
     gid = str(guild_id)
     data.setdefault("logs", {}).setdefault(gid, {"channel_id": None, "events": {}})
     cfg = data["logs"][gid]["events"]
-    cfg[event] = not cfg.get(event, False)
+    cfg[event] = not cfg.get(event, True)
     save_data(data)
 
 
@@ -140,7 +140,7 @@ def set_log_channel(guild_id: int, channel_id: int):
 
 async def send_log(guild: discord.Guild, event: str, embed: discord.Embed):
     cfg = get_log_config(guild.id)
-    if not cfg["events"].get(event, False):
+    if not cfg["events"].get(event, True):
         return
     ch_id = cfg.get("channel_id")
     if not ch_id:
@@ -518,7 +518,7 @@ class LogsPanelView(discord.ui.View):
         enabled_map = cfg.get("events", {})
 
         for i, (key, label) in enumerate(events):
-            enabled = enabled_map.get(key, False)
+            enabled = enabled_map.get(key, True)
             btn = discord.ui.Button(
                 label=f"{'✅' if enabled else '❌'} {label}",
                 style=discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary,
